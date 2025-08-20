@@ -34,6 +34,9 @@ WORKER_THREADS=4
 MAX_PACKET_RATE=30000
 PUBLIC_IP=""
 HOSTNAME=""
+ENABLE_SWAP=false
+MEMORY_LIMIT="4G"
+RUST_BUILD_JOBS=0
 
 # Print functions
 print_header() {
@@ -151,6 +154,64 @@ detect_vps_environment() {
     log_action "VPS Environment detected - Provider: $provider, IP: $PUBLIC_IP"
 }
 
+# Create swap file for low memory systems
+setup_swap_space() {
+    if [[ "$ENABLE_SWAP" == "true" ]]; then
+        print_info "Setting up swap space for low memory system..."
+        
+        # Check if swap is already active
+        if swapon --show | grep -q "/swapfile"; then
+            print_info "Swap file already exists"
+            return 0
+        fi
+        
+        # Determine swap size based on RAM
+        local ram_mb=$(free -m | awk '/^Mem:/{print $2}')
+        local swap_size_mb
+        
+        if [[ $ram_mb -lt 900 ]]; then
+            swap_size_mb=2048  # 2GB swap for <1GB RAM
+        elif [[ $ram_mb -lt 2048 ]]; then
+            swap_size_mb=1536  # 1.5GB swap for 1-2GB RAM
+        else
+            swap_size_mb=1024  # 1GB swap for 2-4GB RAM
+        fi
+        
+        print_info "Creating ${swap_size_mb}MB swap file..."
+        
+        # Create swap file
+        if ! sudo fallocate -l "${swap_size_mb}M" /swapfile; then
+            print_warning "fallocate failed, trying dd..."
+            if ! sudo dd if=/dev/zero of=/swapfile bs=1M count="$swap_size_mb" 2>/dev/null; then
+                print_error "Failed to create swap file"
+                return 1
+            fi
+        fi
+        
+        # Set permissions
+        sudo chmod 600 /swapfile
+        
+        # Set up swap
+        if sudo mkswap /swapfile && sudo swapon /swapfile; then
+            print_success "Swap space created and activated (${swap_size_mb}MB)"
+            
+            # Make swap permanent
+            if ! grep -q "/swapfile" /etc/fstab; then
+                echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
+            fi
+            
+            # Optimize swappiness for better performance
+            echo "vm.swappiness=10" | sudo tee -a /etc/sysctl.conf
+            sudo sysctl vm.swappiness=10
+            
+            log_action "Swap space created: ${swap_size_mb}MB"
+        else
+            print_error "Failed to activate swap"
+            return 1
+        fi
+    fi
+}
+
 # Check system requirements with VPS optimizations
 check_system() {
     print_info "Checking system requirements..."
@@ -184,16 +245,32 @@ then
     print_info "  CPU Cores: $cpu_cores"
     print_info "  Available Disk: ${disk_gb}GB"
 
-    # Warnings for low resources
-    if [[ $ram_gb -lt 2 ]]; then
-        print_error "Minimum 2GB RAM required for stable operation"
-        exit 1
+    # Optimize for low memory systems
+    if [[ $ram_gb -lt 1 ]] || [[ $ram_mb -lt 900 ]]; then
+        print_warning "Less than 1GB RAM detected - applying extreme memory optimization"
+        WORKER_THREADS=1
+        MAX_PACKET_RATE=5000
+        ENABLE_SWAP=true
+        MEMORY_LIMIT="800M"
+        RUST_BUILD_JOBS=1
+        print_info "Ultra-low memory configuration applied"
+    elif [[ $ram_gb -lt 2 ]]; then
+        print_warning "Less than 2GB RAM - applying memory optimizations"
+        WORKER_THREADS=1
+        MAX_PACKET_RATE=8000
+        ENABLE_SWAP=true
+        MEMORY_LIMIT="1.5G"
+        RUST_BUILD_JOBS=1
+        print_info "Low memory optimization applied"
     elif [[ $ram_gb -lt 4 ]]; then
         print_warning "4GB+ RAM recommended for optimal performance"
         # Adjust worker threads for low memory systems
         WORKER_THREADS=2
         MAX_PACKET_RATE=15000
+        MEMORY_LIMIT="3G"
         print_info "Adjusted settings for lower memory system"
+    else
+        MEMORY_LIMIT="4G"
     fi
 
     if [[ $cpu_cores -lt 2 ]]; then
@@ -547,6 +624,8 @@ get_user_config() {
     [[ "$NODE_TYPE" == "mixnode" ]] && echo "  Bootstrap Peers: $BOOTSTRAP_PEERS"
     echo "  Worker Threads: $WORKER_THREADS"
     echo "  Max Packet Rate: $MAX_PACKET_RATE"
+    echo "  Memory Limit: $MEMORY_LIMIT"
+    [[ "$ENABLE_SWAP" == "true" ]] && echo "  Swap Space: Enabled (for low memory optimization)"
 
     echo ""
     read -p "Proceed with this configuration? [Y/n]: " confirm_config
@@ -588,21 +667,48 @@ build_nym_node() {
         exit 1
     fi
 
-    # Build release binary with optimizations
-    print_info "Compiling binary (this may take 10-30 minutes depending on VPS specs)..."
+    # Build release binary with memory optimizations
+    print_info "Compiling binary (this may take 10-45 minutes depending on VPS specs)..."
     print_info "You can monitor progress in another terminal with: htop"
 
-    # Set compilation flags for better performance
-    export RUSTFLAGS="-C target-cpu=native"
+    # Set compilation flags optimized for memory usage
+    export RUSTFLAGS="-C target-cpu=native -C link-arg=-s"
     export CARGO_INCREMENTAL=0
+    
+    # Set build jobs based on memory availability
+    if [[ "$RUST_BUILD_JOBS" -gt 0 ]]; then
+        export CARGO_BUILD_JOBS="$RUST_BUILD_JOBS"
+        print_info "Using $RUST_BUILD_JOBS parallel build job(s) for low memory system"
+    fi
+    
+    # Additional memory-saving environment variables
+    export CARGO_TARGET_DIR="./target"
+    export CARGO_HOME="$HOME/.cargo"
+    
+    # Clear memory before build
+    sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
 
-    if ! cargo build --release --bin nym-mixnode-rs; then
-        print_error "Compilation failed"
-        print_info "This might be due to insufficient memory. Try:"
-        print_info "1. Adding swap space: sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && 
-sudo swapon /swapfile"
-        print_info "2. Reducing parallel jobs: CARGO_BUILD_JOBS=1 cargo build --release --bin nym-mixnode-rs"
-        exit 1
+    if ! timeout 3600 cargo build --release --bin nym-mixnode-rs; then
+        print_error "Compilation failed or timed out"
+        
+        if [[ "$ENABLE_SWAP" == "false" ]]; then
+            print_info "Retrying with swap space enabled..."
+            setup_swap_space
+            
+            # Retry build with swap
+            if ! timeout 3600 cargo build --release --bin nym-mixnode-rs; then
+                print_error "Compilation failed even with swap enabled"
+                print_info "Your system may not have enough resources for compilation"
+                print_info "Consider using a VPS with at least 1GB RAM + 2GB swap"
+                exit 1
+            fi
+        else
+            print_info "Build failed even with optimizations. Try:"
+            print_info "1. Restart the VPS and run this script again"
+            print_info "2. Use a VPS with more memory"
+            print_info "3. Consider using pre-compiled binaries if available"
+            exit 1
+        fi
     fi
 
     # Verify binary was created
@@ -737,9 +843,10 @@ metrics:
 
 performance:
     worker_threads: $WORKER_THREADS
-    io_threads: 2
-    max_memory_usage: "1GB"
-    gc_interval: 600
+    io_threads: 1
+    max_memory_usage: "$MEMORY_LIMIT"
+    gc_interval: 300
+    enable_memory_optimization: true
 
 security:
     enable_tls: false
@@ -832,10 +939,11 @@ storage:
     database_pool_size: 5
 
 performance:
-    io_threads: 2
-    max_memory_usage: "2GB"
+    io_threads: 1
+    max_memory_usage: "$MEMORY_LIMIT"
     gc_interval: 300
     enable_optimizations: true
+    enable_memory_optimization: true
 EOF
     fi
 
@@ -879,10 +987,10 @@ KillSignal=SIGTERM
 LimitNOFILE=65536
 LimitNPROC=32768
 
-# Performance settings
+# Performance settings  
 CPUWeight=100
-MemoryHigh=3G
-MemoryMax=4G
+MemoryHigh=$MEMORY_LIMIT
+MemoryMax=$MEMORY_LIMIT
 IOWeight=100
 
 # Security settings
@@ -1313,6 +1421,14 @@ show_final_info() {
     echo "  • Monitor disk space: df -h"
     echo "  • Check memory usage: free -h"
     echo "  • Monitor network: ss -tulnp"
+    [[ "$ENABLE_SWAP" == "true" ]] && echo "  • Swap space is configured for memory optimization"
+    
+    echo ""
+    echo -e "${CYAN}Memory Optimization Status:${NC}"
+    echo "  • Worker Threads: $WORKER_THREADS"
+    echo "  • Memory Limit: $MEMORY_LIMIT"
+    [[ "$ENABLE_SWAP" == "true" ]] && echo "  • Swap Space: Active"
+    [[ "$RUST_BUILD_JOBS" -gt 0 ]] && echo "  • Build was optimized for low memory ($RUST_BUILD_JOBS jobs)"
 
     if [[ "$NODE_TYPE" == "bootstrap" ]]; then
         echo ""
@@ -1349,9 +1465,10 @@ main() {
     print_info "This script will deploy a production-ready Nym mixnode on your Ubuntu VPS"
     print_warning "Ensure you have:"
     print_warning "  • A stable internet connection"
-    print_warning "  • At least 2GB RAM and 20GB disk space"
+    print_warning "  • At least 512MB RAM and 20GB disk space"
     print_warning "  • Sudo privileges"
     print_warning "  • Ports 8080/UDP and 9090/TCP accessible"
+    print_info "Note: Systems with less than 2GB RAM will use memory optimizations and swap space"
 
     echo ""
     read -p "Continue with VPS deployment? [y/N]: " confirm
@@ -1374,6 +1491,7 @@ main() {
     # Main deployment
     print_header "VPS Deployment"
     install_dependencies
+    setup_swap_space
     configure_firewall
     create_user_and_dirs
     build_nym_node
