@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nym-mixnode-service
+  labels:
+    app: nym-mixnode
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 1789
+    targetPort: 1789
+    protocol: UDP
+    name: mixnode
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  selector:
+    app: nym-mixnode
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nym-mixnode-metrics
+  labels:
+    app: nym-mixnode
+    component: metrics
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: metrics
+  selector:
+    app: nym-mixnode
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nym-mixnode-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: nym-mixnode
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from: []
+    ports:
+    - protocol: UDP
+      port: 1789
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - {}  # Allow all outbound traffic

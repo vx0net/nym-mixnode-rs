@@ -1,0 +1,48 @@
+[Unit]
+Description=Nym Mixnode High-Performance Implementation
+Documentation=https://github.com/your-org/nym-mixnode-rs
+After=network.target
+Wants=network.target
+
+[Service]
+Type=exec
+User=nym-mixnode
+Group=nym-mixnode
+WorkingDirectory=/opt/nym-mixnode
+ExecStart=/opt/nym-mixnode/bin/nym-mixnode-rs --config /etc/nym-mixnode/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StartLimitBurst=3
+StartLimitInterval=60
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/nym-mixnode/data /var/log/nym-mixnode
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictNamespaces=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryLimit=2G
+CPUQuota=400%
+
+# Environment
+Environment=RUST_LOG=info
+Environment=RUST_BACKTRACE=1
+Environment=MIXNODE_CONFIG=/etc/nym-mixnode/config.yaml
+
+[Install]
+WantedBy=multi-user.target

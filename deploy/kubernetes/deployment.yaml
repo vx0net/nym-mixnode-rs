@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nym-mixnode
+  labels:
+    app: nym-mixnode
+    version: v1.0.0
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nym-mixnode
+  template:
+    metadata:
+      labels:
+        app: nym-mixnode
+        version: v1.0.0
+    spec:
+      containers:
+      - name: nym-mixnode
+        image: nym-mixnode:latest
+        ports:
+        - containerPort: 1789
+          name: mixnode
+          protocol: UDP
+        - containerPort: 8080
+          name: metrics
+          protocol: TCP
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: MIXNODE_LISTEN
+          value: "0.0.0.0:1789"
+        - name: MIXNODE_MAX_RATE
+          value: "30000"
+        - name: MIXNODE_WORKERS
+          value: "4"
+        - name: ENABLE_METRICS
+          value: "true"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: data-volume
+          mountPath: /app/data
+        - name: config-volume
+          mountPath: /app/config
+      volumes:
+      - name: data-volume
+        persistentVolumeClaim:
+          claimName: nym-mixnode-data
+      - name: config-volume
+        configMap:
+          name: nym-mixnode-config
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nym-mixnode-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nym-mixnode-config
+data:
+  config.yaml: |
+    node_id: "nym-mixnode-k8s"
+    listen_address: "0.0.0.0:1789"
+    max_packet_rate: 30000
+    cover_traffic_ratio: 0.1
+    worker_threads: 4
+    enable_metrics: true
+    metrics_port: 8080
+    storage:
+      data_dir: "/app/data"
+      enable_persistence: true
+    logging:
+      level: "info"
+      format: "json"
+    security:
+      enable_rate_limiting: true
+      enable_intrusion_detection: true

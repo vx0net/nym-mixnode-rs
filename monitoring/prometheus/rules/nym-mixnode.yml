@@ -1,0 +1,65 @@
+groups:
+  - name: nym-mixnode
+    rules:
+      - alert: MixnodeDown
+        expr: up{job="nym-mixnode"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Nym Mixnode is down"
+          description: "Nym Mixnode {{ $labels.instance }} has been down for more than 30 seconds."
+
+      - alert: LowThroughput
+        expr: nym_packets_per_second < 20000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nym Mixnode throughput below target"
+          description: "Nym Mixnode {{ $labels.instance }} throughput is {{ $value }} pkt/s, below 20k target."
+
+      - alert: HighErrorRate
+        expr: rate(nym_processing_errors_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in Nym Mixnode"
+          description: "Nym Mixnode {{ $labels.instance }} error rate is {{ $value }} errors/sec."
+
+      - alert: HighMemoryUsage
+        expr: nym_memory_usage_bytes / 1024 / 1024 / 1024 > 1.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Nym Mixnode {{ $labels.instance }} memory usage is {{ $value }}GB."
+
+      - alert: HighCPUUsage
+        expr: nym_cpu_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "Nym Mixnode {{ $labels.instance }} CPU usage is {{ $value }}%."
+
+      - alert: ConnectionPoolExhausted
+        expr: nym_connection_pool_active / nym_connection_pool_total > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connection pool nearly exhausted"
+          description: "Nym Mixnode {{ $labels.instance }} using {{ $value }}% of connection pool."
+
+      - alert: SecurityIncident
+        expr: increase(nym_security_events_total[5m]) > 5
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Security incident detected"
+          description: "Nym Mixnode {{ $labels.instance }} detected {{ $value }} security events in 5 minutes."

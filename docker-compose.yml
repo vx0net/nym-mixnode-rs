@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  nym-mixnode:
+    build: .
+    container_name: nym-mixnode
+    restart: unless-stopped
+    
+    # Network configuration
+    ports:
+      - "8080:8080/udp"  # Mixnet UDP traffic
+    
+    # Resource limits for 4-core VPS optimization
+    deploy:
+      resources:
+        limits:
+          cpus: '4.0'
+          memory: 2G
+        reservations:
+          cpus: '2.0'
+          memory: 512M
+    
+    # Environment configuration
+    environment:
+      - RUST_LOG=info
+      - MIXNODE_ADDRESS=0.0.0.0:8080
+      - MAX_PACKET_RATE=30000
+      - COVER_TRAFFIC_RATIO=0.1
+      - WORKER_THREADS=4
+    
+    # Performance optimizations
+    sysctls:
+      - net.core.rmem_max=134217728     # 128MB receive buffer
+      - net.core.rmem_default=131072    # 128KB default
+      - net.core.netdev_max_backlog=5000
+    
+    # Security
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    
+    # Volumes for data persistence
+    volumes:
+      - mixnode-data:/app/data
+      - mixnode-logs:/app/logs
+    
+    # Health check
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5s bash -c 'cat < /dev/null > /dev/udp/127.0.0.1/8080' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Monitoring stack (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nym-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - nym-mixnode
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nym-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+# Named volumes for data persistence
+volumes:
+  mixnode-data:
+    driver: local
+  mixnode-logs:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+# Networks
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

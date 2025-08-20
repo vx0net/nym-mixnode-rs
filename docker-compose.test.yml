@@ -1,0 +1,249 @@
+version: '3.8'
+
+services:
+  # Bootstrap node - first node in the network
+  bootstrap-node:
+    build: .
+    container_name: nym-bootstrap
+    hostname: bootstrap-node
+    restart: unless-stopped
+    
+    ports:
+      - "8080:8080/udp"  # P2P networking
+      - "9090:9090/tcp"  # HTTP API/metrics
+    
+    environment:
+      - RUST_LOG=info
+      - NODE_ID=bootstrap-node
+      - MIXNODE_ADDRESS=0.0.0.0:8080
+      - HTTP_ADDRESS=0.0.0.0:9090
+      - BOOTSTRAP_MODE=true
+      - BOOTSTRAP_PEERS=""
+      - MAX_PACKET_RATE=30000
+      - COVER_TRAFFIC_RATIO=0.1
+      - WORKER_THREADS=2
+      - REGION=NorthAmerica
+      - STAKE_AMOUNT=10000
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.10
+    
+    volumes:
+      - bootstrap-data:/app/data
+      - bootstrap-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Regular mixnode 1
+  mixnode-1:
+    build: .
+    container_name: nym-mixnode-1
+    hostname: mixnode-1
+    restart: unless-stopped
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    
+    ports:
+      - "8081:8080/udp"
+      - "9091:9090/tcp"
+    
+    environment:
+      - RUST_LOG=info
+      - NODE_ID=mixnode-1
+      - MIXNODE_ADDRESS=0.0.0.0:8080
+      - HTTP_ADDRESS=0.0.0.0:9090
+      - BOOTSTRAP_MODE=false
+      - BOOTSTRAP_PEERS=172.25.0.10:8080
+      - MAX_PACKET_RATE=30000
+      - COVER_TRAFFIC_RATIO=0.1
+      - WORKER_THREADS=2
+      - REGION=Europe
+      - STAKE_AMOUNT=5000
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.11
+    
+    volumes:
+      - mixnode1-data:/app/data
+      - mixnode1-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Regular mixnode 2
+  mixnode-2:
+    build: .
+    container_name: nym-mixnode-2
+    hostname: mixnode-2
+    restart: unless-stopped
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    
+    ports:
+      - "8082:8080/udp"
+      - "9092:9090/tcp"
+    
+    environment:
+      - RUST_LOG=info
+      - NODE_ID=mixnode-2
+      - MIXNODE_ADDRESS=0.0.0.0:8080
+      - HTTP_ADDRESS=0.0.0.0:9090
+      - BOOTSTRAP_MODE=false
+      - BOOTSTRAP_PEERS=172.25.0.10:8080,172.25.0.11:8080
+      - MAX_PACKET_RATE=30000
+      - COVER_TRAFFIC_RATIO=0.1
+      - WORKER_THREADS=2
+      - REGION=Asia
+      - STAKE_AMOUNT=7500
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.12
+    
+    volumes:
+      - mixnode2-data:/app/data
+      - mixnode2-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Regular mixnode 3
+  mixnode-3:
+    build: .
+    container_name: nym-mixnode-3
+    hostname: mixnode-3
+    restart: unless-stopped
+    depends_on:
+      bootstrap-node:
+        condition: service_healthy
+    
+    ports:
+      - "8083:8080/udp"
+      - "9093:9090/tcp"
+    
+    environment:
+      - RUST_LOG=info
+      - NODE_ID=mixnode-3
+      - MIXNODE_ADDRESS=0.0.0.0:8080
+      - HTTP_ADDRESS=0.0.0.0:9090
+      - BOOTSTRAP_MODE=false
+      - BOOTSTRAP_PEERS=172.25.0.10:8080,172.25.0.11:8080,172.25.0.12:8080
+      - MAX_PACKET_RATE=30000
+      - COVER_TRAFFIC_RATIO=0.1
+      - WORKER_THREADS=2
+      - REGION=Oceania
+      - STAKE_AMOUNT=3000
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.13
+    
+    volumes:
+      - mixnode3-data:/app/data
+      - mixnode3-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # Client simulator for testing
+  test-client:
+    build: .
+    container_name: nym-test-client
+    hostname: test-client
+    restart: "no"
+    depends_on:
+      mixnode-1:
+        condition: service_healthy
+      mixnode-2:
+        condition: service_healthy
+      mixnode-3:
+        condition: service_healthy
+    
+    environment:
+      - RUST_LOG=debug
+      - CLIENT_MODE=true
+      - BOOTSTRAP_PEERS=172.25.0.10:8080,172.25.0.11:8080,172.25.0.12:8080,172.25.0.13:8080
+      - TEST_DURATION=300  # 5 minutes
+      - PACKETS_PER_SECOND=100
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.20
+    
+    volumes:
+      - client-logs:/app/logs
+    
+    command: ["/usr/local/bin/nym-mixnode-rs", "--client-mode"]
+
+  # Network monitoring
+  network-monitor:
+    image: nicolaka/netshoot
+    container_name: nym-network-monitor
+    hostname: network-monitor
+    restart: unless-stopped
+    depends_on:
+      - bootstrap-node
+      - mixnode-1
+      - mixnode-2
+      - mixnode-3
+    
+    networks:
+      mixnet:
+        ipv4_address: 172.25.0.254
+    
+    volumes:
+      - ./scripts/monitor.sh:/scripts/monitor.sh:ro
+    
+    command: ["sleep", "infinity"]
+
+# Named volumes for data persistence
+volumes:
+  bootstrap-data:
+    driver: local
+  bootstrap-logs:
+    driver: local
+  mixnode1-data:
+    driver: local
+  mixnode1-logs:
+    driver: local
+  mixnode2-data:
+    driver: local
+  mixnode2-logs:
+    driver: local
+  mixnode3-data:
+    driver: local
+  mixnode3-logs:
+    driver: local
+  client-logs:
+    driver: local
+
+# Custom network for mixnode communication
+networks:
+  mixnet:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1
