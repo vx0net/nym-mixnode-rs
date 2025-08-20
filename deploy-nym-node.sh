@@ -21,8 +21,8 @@ NYM_HOME="/var/lib/nym"
 NYM_CONFIG="/etc/nym"
 NYM_LOGS="/var/log/nym"
 NYM_BINARY="/usr/local/bin/nym-mixnode-rs"
-GITHUB_REPO="https://github.com/your-org/nym-mixnode-rs.git"
-RUST_VERSION="1.70.0"
+GITHUB_REPO="https://github.com/vx0net/nym-mixnode-rs.git"
+RUST_VERSION="1.80.0"
 DOCKER_COMPOSE_VERSION="2.21.0"
 
 # Global variables for configuration
