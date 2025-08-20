@@ -22,7 +22,7 @@ NYM_CONFIG="/etc/nym"
 NYM_LOGS="/var/log/nym"
 NYM_BINARY="/usr/local/bin/nym-mixnode-rs"
 GITHUB_REPO="https://github.com/vx0net/nym-mixnode-rs.git"
-RUST_VERSION="1.80.0"
+RUST_VERSION="1.82.0"
 DOCKER_COMPOSE_VERSION="2.21.0"
 
 # Global variables for configuration
@@ -683,16 +683,44 @@ build_nym_node() {
     
     # Clear memory before build
     sync && echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+    
+    # Clean cargo registry if corrupted
+    if [[ -d "$HOME/.cargo/registry" ]]; then
+        print_info "Cleaning cargo registry to avoid corruption issues..."
+        rm -rf "$HOME/.cargo/registry/cache"
+        rm -rf "$HOME/.cargo/registry/src"
+    fi
 
-    if ! timeout 3600 cargo build --release --bin nym-mixnode-rs; then
+    if ! timeout 3600 cargo build --release --bin nym-mixnode-rs 2>&1 | tee /tmp/build_error.log; then
         print_error "Compilation failed or timed out"
         
-        if [[ "$ENABLE_SWAP" == "false" ]]; then
+        # Check if error is due to Rust version/edition issues
+        if grep -q "edition2024\|edition.*required" /tmp/build_error.log 2>/dev/null; then
+            print_error "Rust version is too old for this project"
+            print_info "Updating Rust to the latest stable version..."
+            
+            # Update Rust to latest stable
+            rustup update stable
+            rustup default stable
+            
+            # Retry build with updated Rust
+            if ! timeout 3600 cargo build --release --bin nym-mixnode-rs 2>&1 | tee /tmp/build_error.log; then
+                print_error "Build failed even with updated Rust"
+                print_info "The project may require nightly Rust. Trying nightly..."
+                rustup install nightly
+                rustup default nightly
+                
+                if ! timeout 3600 cargo build --release --bin nym-mixnode-rs; then
+                    print_error "Build failed with nightly Rust as well"
+                    exit 1
+                fi
+            fi
+        elif [[ "$ENABLE_SWAP" == "false" ]]; then
             print_info "Retrying with swap space enabled..."
             setup_swap_space
             
             # Retry build with swap
-            if ! timeout 3600 cargo build --release --bin nym-mixnode-rs; then
+            if ! timeout 3600 cargo build --release --bin nym-mixnode-rs 2>&1 | tee /tmp/build_error.log; then
                 print_error "Compilation failed even with swap enabled"
                 print_info "Your system may not have enough resources for compilation"
                 print_info "Consider using a VPS with at least 1GB RAM + 2GB swap"

@@ -34,7 +34,9 @@ impl SimdKeyDeriver {
         // Use SIMD-optimized Blake3 if available
         #[cfg(target_arch = "x86_64")]
         if self.avx2_support {
-            return self.derive_keys_avx2(shared_secret);
+            unsafe {
+                return self.derive_keys_avx2(shared_secret);
+            }
         }
 
         #[cfg(target_arch = "aarch64")]
