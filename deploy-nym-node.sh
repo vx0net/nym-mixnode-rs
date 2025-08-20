@@ -224,8 +224,7 @@ check_system() {
 
     local ubuntu_version=$(lsb_release -rs 2>/dev/null || echo "unknown")
     if [[ "$ubuntu_version" != "unknown" ]]; then
-        if [[ $(echo "$ubuntu_version < 20.04" | bc -l 2>/dev/null || echo "1") -eq 1 ]] && [[ "$ubuntu_version" != "unknown" ]];
-then
+        if [[ $(echo "$ubuntu_version < 20.04" | bc -l 2>/dev/null || echo "1") -eq 1 ]] && [[ "$ubuntu_version" != "unknown" ]]; then
             print_error "Ubuntu 20.04 or newer is required"
             exit 1
         fi
@@ -379,12 +378,10 @@ install_dependencies() {
         sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
 
         # Add Docker's official GPG key
-        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o
-/usr/share/keyrings/docker-archive-keyring.gpg
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
         # Add the repository
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] 
-https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
         # Install Docker
         sudo apt update
@@ -407,8 +404,7 @@ https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /
         print_info "Installing Docker Compose..."
 
         # Download docker-compose
-        sudo curl -L "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname 
--s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo curl -L "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 
         # Make executable
         sudo chmod +x /usr/local/bin/docker-compose
